@@ -1,0 +1,1256 @@
+datasource db {
+  provider = "postgresql"
+  schemas  = ["public", "contabilidad"]
+}
+
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["multiSchema"]
+}
+
+// ==========================================
+// CONTABILIDAD SCHEMA MODELS
+// ==========================================
+
+model CuentaContable {
+  id          String         @id @default(uuid())
+  codigo      String         @unique // e.g., "1.1.01"
+  nombre      String
+  tipo        String         // ACTIVO, PASIVO, PATRIMONIO, INGRESO, EGRESO, COSTO, GASTO
+  nivel       Int            @default(1)
+  estado      String         @default("ACTIVO") // ACTIVO, INACTIVO
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  lineas      LineaAsiento[]
+
+  @@schema("contabilidad")
+}
+
+model AsientoDiario {
+  id          String         @id @default(uuid())
+  numero      String         @unique // e.g., "ADI-2026-0001"
+  concepto    String
+  fecha       DateTime       @default(now())
+  referencia  String?        // ID de la Factura, Pago o Nota que lo generó
+  tipoOrigen  String?        // FACTURA, PAGO, NOTA_CREDITO, NOTA_DEBITO, MANUAL
+  estado      String         @default("BORRADOR") // BORRADOR, POSTEADO, ANULADO
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  lineas      LineaAsiento[]
+
+  @@schema("contabilidad")
+}
+
+model LineaAsiento {
+  id               String         @id @default(uuid())
+  asientoId        String
+  cuentaId         String
+  debe             Float          @default(0.0)
+  haber            Float          @default(0.0)
+  glosa            String?        // Descripción individual de la línea
+  createdAt        DateTime       @default(now())
+
+  asiento          AsientoDiario  @relation(fields: [asientoId], references: [id], onDelete: Cascade)
+  cuenta           CuentaContable @relation(fields: [cuentaId], references: [id])
+
+  @@schema("contabilidad")
+}
+
+model FacturaCompra {
+  id                  String         @id @default(uuid())
+  numeroFactura       String
+  proveedorId         String
+  ordenCompraId       String?
+  recepcionMaterialId String?
+  fechaEmision        DateTime
+  fechaVencimiento    DateTime
+  subtotal            Float          @default(0.0)
+  iva                 Float          @default(0.0) // 13% in El Salvador
+  retencionIva        Float          @default(0.0) // 1% Gran Contribuyente retention
+  retencionRenta      Float          @default(0.0) // 10% on services
+  total               Float          @default(0.0)
+  estado              String         @default("PENDIENTE") // PENDIENTE, APROBADA, PAGADA_PARCIAL, PAGADA, ANULADA, BLOQUEADA_MATCH
+  matchStatus         String         @default("NO_APLICA") // MATCH_OK, MATCH_MISMATCH, NO_APLICA
+  observaciones       String?
+  moneda              String         @default("USD")
+  asientoId           String?        // Related posted AsientoDiario ID
+  createdAt           DateTime       @default(now())
+  updatedAt           DateTime       @updatedAt
+
+  detalles            FacturaCompraDetalle[]
+  pagos               PagoCompra[]
+  notas               NotaCreditoDebito[]
+
+  // Cross-schema relations
+  proveedor           Proveedor      @relation(fields: [proveedorId], references: [id])
+  ordenCompra         OrdenCompra?   @relation(fields: [ordenCompraId], references: [id])
+  recepcionMaterial   RecepcionMaterial? @relation(fields: [recepcionMaterialId], references: [id])
+
+  @@unique([proveedorId, numeroFactura])
+  @@schema("contabilidad")
+}
+
+model FacturaCompraDetalle {
+  id              String         @id @default(uuid())
+  facturaCompraId String
+  productoId      String
+  cantidad        Float
+  costoUnitario   Float
+  subtotal        Float
+
+  facturaCompra   FacturaCompra  @relation(fields: [facturaCompraId], references: [id], onDelete: Cascade)
+  producto        Producto       @relation(fields: [productoId], references: [id])
+
+  @@schema("contabilidad")
+}
+
+model PagoCompra {
+  id              String         @id @default(uuid())
+  facturaCompraId String
+  monto           Float
+  fechaPago       DateTime       @default(now())
+  metodoPago      String         // TRANSFERENCIA, CHEQUE, DEPOSITO, EFECTIVO
+  referencia      String?        
+  chequeNumero    String?
+  chequeBanco     String?
+  chequeVence     DateTime?
+  transfeCuenta   String?
+  estado          String         @default("PENDIENTE_CONFIRMACION") // PENDIENTE_CONFIRMACION, CONCILIADO, ANULADO
+  usuarioId       String
+  asientoId       String?        // Related posted AsientoDiario ID
+  createdAt       DateTime       @default(now())
+
+  facturaCompra   FacturaCompra  @relation(fields: [facturaCompraId], references: [id])
+  usuario         Usuario        @relation(fields: [usuarioId], references: [id])
+
+  @@schema("contabilidad")
+}
+
+model NotaCreditoDebito {
+  id              String         @id @default(uuid())
+  tipo            String         // CREDITO, DEBITO
+  numeroNota      String
+  facturaCompraId String
+  monto           Float
+  fecha           DateTime       @default(now())
+  concepto        String         // DEVOLUCION, AJUSTE_PRECIO, DESCUENTO, CORRECCION
+  motivo          String?
+  asientoId       String?        // Related posted AsientoDiario ID
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  facturaCompra   FacturaCompra  @relation(fields: [facturaCompraId], references: [id], onDelete: Cascade)
+
+  @@unique([facturaCompraId, numeroNota])
+  @@schema("contabilidad")
+}
+
+model ConciliacionBancaria {
+  id              String         @id @default(uuid())
+  fechaEjecucion  DateTime       @default(now())
+  referenciaBanco String
+  monto           Float
+  tipo            String         // DEPOSITO, RETIRO
+  estado          String         @default("PENDIENTE") // PENDIENTE, CONCILIADO
+  observaciones   String?
+  createdAt       DateTime       @default(now())
+
+  @@schema("contabilidad")
+}
+
+model ConfiguracionContable {
+  clave           String         @id
+  valor           String
+  updatedAt       DateTime       @updatedAt
+
+  @@schema("contabilidad")
+}
+
+// ==========================================
+// PUBLIC SCHEMA MODELS (MRP OPERATIONS)
+// ==========================================
+
+model Sucursal {
+  id        String   @id @default(uuid())
+  codigo    String   @unique
+  nombre    String
+  direccion String
+  telefono  String
+  correo    String
+  estado    String   @default("ACTIVO")
+  latitud   Float?
+  longitud  Float?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  usuarios          Usuario[]
+  inventarios       Inventario[]
+  bodegas           Bodega[]
+  freezers          Freezer[]
+  ventas            Venta[]
+  ordenCompras      OrdenCompra[]
+  alertas           Alerta[]
+  cajas             CajaControl[]
+  ordenesProduccion OrdenProduccion[]
+
+  transferenciasOrigen  Transferencia[] @relation("OrigenRelation")
+  transferenciasDestino Transferencia[] @relation("DestinoRelation")
+  movimientosOrigen     MovimientoInventario[] @relation("OrigenRelationMov")
+  movimientosDestino    MovimientoInventario[] @relation("DestinoRelationMov")
+  chatMensajes          ChatMensaje[]
+
+  rutasOrigen                 Ruta[]                      @relation("OrigenRuta")
+  rutasPuntos                 RutaPunto[]
+  solicitudesReabastecimiento SolicitudReabastecimiento[]
+  recepcionesMaterial         RecepcionMaterial[]
+
+  @@schema("public")
+}
+
+model Usuario {
+  id         String   @id @default(uuid())
+  email      String   @unique
+  password   String
+  pin        String?
+  nombre     String
+  rol        String
+  estado     String   @default("ACTIVO")
+  sucursalId String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  sucursal           Sucursal?            @relation(fields: [sucursalId], references: [id])
+  ventas             Venta[]
+  cajas              CajaControl[]
+  ordenCompras       OrdenCompra[]        @relation("CreadorOC")
+  alertasAtendidas   Alerta[]             @relation("AlertaAtendida")
+  transferenciasCrea Transferencia[]      @relation("CreadoPorRelation")
+  transferenciasReci Transferencia[]      @relation("RecibidoPorRelation")
+  auditorias         Auditoria[]
+  movimientos        MovimientoInventario[]
+  chatMensajes       ChatMensaje[]
+  recepcionesCompra  RecepcionCompra[]
+  pagosCompra        PublicPagoCompra[]
+  ordenesCreadas     OrdenProduccion[]    @relation("CreadorOP")
+  ordenesResponsable OrdenProduccion[]    @relation("ResponsableOP")
+  mermasReportadas   Merma[]
+  controlesLeche     ControlLeche[]
+  controlesCalidad   ControlCalidad[]
+  noConformidades    NoConformidad[]
+  recepcionesMaterial RecepcionMaterial[]
+
+  // Accounting payments
+  pagosContables     PagoCompra[]
+
+  @@schema("public")
+}
+
+model Rol {
+  id          String   @id @default(uuid())
+  nombre      String   @unique
+  descripcion String
+  permisos    String   @default("[]")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@schema("public")
+}
+
+model Producto {
+  id             String   @id @default(uuid())
+  sku            String   @unique
+  codigoBarras   String   @unique
+  descripcion    String
+  categoria      String
+  tipoProducto   String   @default("PRODUCTO_TERMINADO")
+  marca          String
+  unidadMedida   String
+  costo          Float
+  precioVenta    Float
+  iva            Float    @default(0.0)
+  temperaturaMin Float
+  temperaturaMax Float
+  vidaUtilDias   Int
+  leadTime       Int      @default(0)
+  stockMin       Float    @default(0.0)
+  stockMax       Float    @default(0.0)
+  estado         String   @default("ACTIVO")
+  esManufacturado Boolean @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  prodId         Int?     @unique
+
+  inventarios           Inventario[]
+  lotes                 Lote[]
+  ventaDetalles         VentaDetalle[]
+  ordenCompraDetalles   OrdenCompraDetalle[]
+  transferenciaDetalles TransferenciaDetalle[]
+  movimientos           MovimientoInventario[]
+  recepcionesDetalle    RecepcionCompraDetalle[]
+  recetasFinales        Receta[]
+  recetaDetalles        RecetaDetalle[]
+  recetaDetalleSustitutos RecetaDetalleSustituto[]
+  ordenProduccionDetalles OrdenProduccionDetalle[]
+  mermas                Merma[]
+  solicitudesReabastecimiento SolicitudReabastecimiento[]
+  billOfOperations      BillOfOperations[]
+  proveedoresAsociados  ProductoProveedor[]
+  recepcionMaterialDetalles RecepcionMaterialDetalle[]
+
+  // Accounting relations
+  facturasDetalle       FacturaCompraDetalle[]
+  publicFacturasDetalle PublicFacturaCompraDetalle[]
+
+  @@schema("public")
+}
+
+model Proveedor {
+  id              String   @id @default(uuid())
+  codigo          String   @unique
+  nombre          String
+  contacto        String
+  telefono        String
+  correo          String
+  certificaciones String   @default("[]")
+  estado          String   @default("ACTIVO")
+  terminoPagoId   String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  bancoNombre     String?
+  bancoTipoCuenta String?
+  bancoNroCuenta  String?
+  bancoRutTitular String?
+  bancoNomTitular String?
+
+  // Extended Salvadoran fields
+  nit             String?
+  nrc             String?
+  tipoContribuyente String? // GRAN_CONTRIBUYENTE, MEDIANO, PEQUENO, OTROS
+  limiteCredito   Float?
+  moneda          String?  @default("USD")
+
+  terminoPago       TerminoPago?        @relation(fields: [terminoPagoId], references: [id])
+  lotes             Lote[]
+  ordenCompras      OrdenCompra[]
+  productosAsociados ProductoProveedor[]
+  recepcionesMaterial RecepcionMaterial[]
+
+  // Accounting relations
+  facturasContables FacturaCompra[]
+  publicFacturas    PublicFacturaCompra[]
+
+  @@schema("public")
+}
+
+model Lote {
+  id             String   @id @default(uuid())
+  numeroLote     String   @unique
+  productoId     String
+  fechaProduccion DateTime
+  fechaVencimiento DateTime
+  proveedorId    String
+  certificadoUrl String?
+  temperaturaRequeridaMin Float
+  temperaturaRequeridaMax Float
+  cantidadInicial Float
+  cantidadActual Float
+  estado         String   @default("APROBADO")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  ordenProduccionId String?
+  ordenProduccion   OrdenProduccion? @relation(fields: [ordenProduccionId], references: [id])
+
+  producto             Producto               @relation(fields: [productoId], references: [id])
+  proveedor            Proveedor              @relation(fields: [proveedorId], references: [id])
+  ventaDetalles        VentaDetalle[]
+  transferenciaDetalles TransferenciaDetalle[]
+  movimientos          MovimientoInventario[]
+  ordenDetalles        OrdenProduccionDetalle[]
+  recepcionMaterialDetalles RecepcionMaterialDetalle[]
+
+  mezclasCreadas     MezclaLeche[]           @relation("LoteMixtoRelation")
+  mezclasComponentes MezclaLecheComponente[] @relation("LoteOrigenRelation")
+
+  binId          String?
+  bin            Bin?                    @relation(fields: [binId], references: [id])
+
+  @@schema("public")
+}
+
+model Bodega {
+  id          String   @id @default(uuid())
+  codigo      String   @unique
+  nombre      String
+  descripcion String?
+  tipoBodega  String   @default("GENERAL")
+  sucursalId  String
+  estado      String   @default("ACTIVO")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  sucursal    Sucursal @relation(fields: [sucursalId], references: [id])
+  inventarios Inventario[]
+  bins        Bin[]
+  movimientosOrigen  MovimientoInventario[] @relation("OrigenBodegaRelationMov")
+  movimientosDestino MovimientoInventario[] @relation("DestinoBodegaRelationMov")
+
+  @@schema("public")
+}
+
+model Bin {
+  id         String   @id @default(uuid())
+  codigo     String
+  nombre     String
+  bodegaId   String
+  capacidad  Float?
+  unidad     String   @default("Lts")
+  estado     String   @default("ACTIVO")
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  bodega     Bodega       @relation(fields: [bodegaId], references: [id])
+  inventarios Inventario[]
+  lotes      Lote[]
+
+  @@unique([bodegaId, codigo])
+  @@schema("public")
+}
+
+model Inventario {
+  id           String   @id @default(uuid())
+  productoId   String
+  sucursalId   String
+  bodegaId     String?
+  binId        String?
+  existencia   Float    @default(0)
+  existMin     Float    @default(0)
+  existMax     Float    @default(0)
+  comprometido Float    @default(0)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  producto Producto @relation(fields: [productoId], references: [id])
+  sucursal Sucursal @relation(fields: [sucursalId], references: [id])
+  bodega   Bodega?  @relation(fields: [bodegaId], references: [id])
+  bin      Bin?     @relation(fields: [binId], references: [id])
+
+  @@unique([productoId, bodegaId, binId])
+  @@schema("public")
+}
+
+model MovimientoInventario {
+  id                String   @id @default(uuid())
+  tipo              String
+  productoId        String
+  loteId            String?
+  sucursalOrigenId  String?
+  sucursalDestinoId String?
+  bodegaOrigenId    String?
+  bodegaDestinoId   String?
+  cantidad          Float
+  fecha             DateTime @default(now())
+  motivo            String
+  usuarioId         String
+
+  producto       Producto  @relation(fields: [productoId], references: [id])
+  lote           Lote?     @relation(fields: [loteId], references: [id])
+  sucursalOrigen Sucursal? @relation("OrigenRelationMov", fields: [sucursalOrigenId], references: [id])
+  sucursalDestino Sucursal? @relation("DestinoRelationMov", fields: [sucursalDestinoId], references: [id])
+  bodegaOrigen    Bodega?   @relation("OrigenBodegaRelationMov", fields: [bodegaOrigenId], references: [id])
+  bodegaDestino   Bodega?   @relation("DestinoBodegaRelationMov", fields: [bodegaDestinoId], references: [id])
+  usuario        Usuario   @relation(fields: [usuarioId], references: [id])
+
+  @@schema("public")
+}
+
+model Transferencia {
+  id             String   @id @default(uuid())
+  codigo         String   @unique
+  origenId       String
+  destinoId      String
+  estado         String   @default("PENDIENTE")
+  fechaEnvio     DateTime @default(now())
+  fechaRecepcion DateTime?
+  creadoPorId    String
+  recibidoPorId  String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  origen       Sucursal @relation("OrigenRelation", fields: [origenId], references: [id])
+  destino      Sucursal @relation("DestinoRelation", fields: [destinoId], references: [id])
+  creadoPor    Usuario  @relation("CreadoPorRelation", fields: [creadoPorId], references: [id])
+  recibidoPor  Usuario? @relation("RecibidoPorRelation", fields: [recibidoPorId], references: [id])
+  detalles     TransferenciaDetalle[]
+
+  @@schema("public")
+}
+
+model TransferenciaDetalle {
+  id              String   @id @default(uuid())
+  transferenciaId String
+  productoId      String
+  loteId          String
+  cantidad        Float
+
+  transferencia Transferencia @relation(fields: [transferenciaId], references: [id])
+  producto      Producto      @relation(fields: [productoId], references: [id])
+  lote          Lote          @relation(fields: [loteId], references: [id])
+
+  @@schema("public")
+}
+
+model OrdenCompra {
+  id            String   @id @default(uuid())
+  numeroOrden   String   @unique
+  proveedorId   String
+  sucursalId    String
+  estado        String   @default("BORRADOR")
+  fecha         DateTime @default(now())
+  fechaEntrega  DateTime?
+  total         Float    @default(0)
+  creadoPorId   String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  proveedor   Proveedor            @relation(fields: [proveedorId], references: [id])
+  sucursal    Sucursal             @relation(fields: [sucursalId], references: [id])
+  creadoPor   Usuario              @relation("CreadorOC", fields: [creadoPorId], references: [id])
+  detalles    OrdenCompraDetalle[]
+  recepciones RecepcionCompra[]
+  recepcionesMaterial RecepcionMaterial[]
+
+  // Accounting relations
+  facturasContables FacturaCompra[]
+  publicFacturas    PublicFacturaCompra[]
+
+  @@schema("public")
+}
+
+model OrdenCompraDetalle {
+  id            String   @id @default(uuid())
+  ordenCompraId String
+  productoId    String
+  cantidad      Float
+  cantidadRecibida Float @default(0)
+  costoUnitario Float
+  fechaEntrega  DateTime?
+  lineaNum      Int      @default(1)
+  notas         String?
+
+  ordenCompra OrdenCompra @relation(fields: [ordenCompraId], references: [id])
+  producto    Producto    @relation(fields: [productoId], references: [id])
+
+  @@schema("public")
+}
+
+model CajaControl {
+  id            String   @id @default(uuid())
+  sucursalId    String
+  cajeroId      String
+  fechaApertura DateTime @default(now())
+  fechaCierre   DateTime?
+  montoApertura Float
+  montoCierre   Float?
+  montoArqueo   Float?
+  diferencia    Float?
+  estado        String   @default("ABIERTA")
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  sucursal Sucursal @relation(fields: [sucursalId], references: [id])
+  cajero   Usuario  @relation(fields: [cajeroId], references: [id])
+  ventas   Venta[]
+
+  @@schema("public")
+}
+
+model Venta {
+  id               String   @id @default(uuid())
+  ticketNumero     String   @unique
+  sucursalId       String
+  clienteNombre    String?
+  clienteDocumento String?
+  fecha            DateTime @default(now())
+  metodoPago       String
+  subtotal         Float
+  iva              Float
+  total            Float
+  cajeroId         String
+  cajaAperturaId   String
+  createdAt        DateTime @default(now())
+  estado           String   @default("COMPLETADA")
+
+  sucursal     Sucursal      @relation(fields: [sucursalId], references: [id])
+  cajero       Usuario       @relation(fields: [cajeroId], references: [id])
+  cajaApertura CajaControl   @relation(fields: [cajaAperturaId], references: [id])
+  detalles     VentaDetalle[]
+
+  @@schema("public")
+}
+
+model VentaDetalle {
+  id             String   @id @default(uuid())
+  ventaId        String
+  productoId     String
+  loteId         String
+  cantidad       Float
+  precioUnitario Float
+  subtotal       Float
+  iva            Float
+  total          Float
+
+  venta    Venta    @relation(fields: [ventaId], references: [id])
+  producto Producto @relation(fields: [productoId], references: [id])
+  lote     Lote     @relation(fields: [loteId], references: [id])
+
+  @@schema("public")
+}
+
+model Freezer {
+  id             String   @id @default(uuid())
+  codigo         String   @unique
+  nombre         String
+  sucursalId     String
+  ubicacion      String
+  temperaturaMin Float
+  temperaturaMax Float
+  estado         String   @default("CONECTADO")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  sucursal Sucursal         @relation(fields: [sucursalId], references: [id])
+  lecturas FreezerLectura[]
+
+  @@schema("public")
+}
+
+model FreezerLectura {
+  id          String   @id @default(uuid())
+  freezerId   String
+  temperatura Float
+  humedad     Float
+  fecha       DateTime @default(now())
+  estado      String   @default("OK")
+
+  freezer Freezer @relation(fields: [freezerId], references: [id])
+
+  @@schema("public")
+}
+
+model Alerta {
+  id             String   @id @default(uuid())
+  sucursalId     String
+  tipo           String
+  mensaje        String
+  estado         String   @default("ACTIVA")
+  fecha          DateTime @default(now())
+  atendidaPorId  String?
+  notasAtencion  String?
+  updatedAt      DateTime @updatedAt
+
+  sucursal    Sucursal @relation(fields: [sucursalId], references: [id])
+  atendidaPor Usuario? @relation("AlertaAtendida", fields: [atendidaPorId], references: [id])
+
+  @@schema("public")
+}
+
+model Auditoria {
+  id            String   @id @default(uuid())
+  usuarioId     String?
+  usuarioNombre String   @default("Sistema")
+  fecha         DateTime @default(now())
+  accion        String
+  modulo        String
+  detalles      String
+
+  usuario Usuario? @relation(fields: [usuarioId], references: [id])
+
+  @@schema("public")
+}
+
+model Categoria {
+  id           String   @id @default(uuid())
+  nombre       String   @unique
+  tipoProducto String   @default("PRODUCTO_TERMINADO")
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@schema("public")
+}
+
+model TipoProducto {
+  id          String   @id @default(uuid())
+  nombre      String   @unique
+  descripcion String
+  metadata    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@schema("public")
+}
+
+model UnidadMedida {
+  id          String   @id @default(uuid())
+  nombre      String   @unique
+  abreviacion String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@schema("public")
+}
+
+model ChatMensaje {
+  id          String   @id @default(uuid())
+  contenido   String
+  usuarioId   String
+  sucursalId  String?
+  fecha       DateTime @default(now())
+
+  usuario     Usuario   @relation(fields: [usuarioId], references: [id])
+  sucursal    Sucursal? @relation(fields: [sucursalId], references: [id])
+
+  @@schema("public")
+}
+
+model Configuracion {
+  clave     String   @id
+  valor     String
+  updatedAt DateTime @updatedAt
+
+  @@schema("public")
+}
+
+model Empresa {
+  id        String   @id @default(uuid())
+  nombre    String
+  direccion String
+  telefono  String
+  email     String
+  nit       String?
+  web       String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@schema("public")
+}
+
+model TerminoPago {
+  id           String      @id @default(uuid())
+  nombre       String      @unique
+  dias         Int         @default(0)
+  estado       String      @default("ACTIVO")
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  proveedores  Proveedor[]
+
+  @@schema("public")
+}
+
+model RecepcionCompra {
+  id              String   @id @default(uuid())
+  numeroRecepcion String   @unique
+  ordenCompraId   String
+  fecha           DateTime @default(now())
+  recibidoPorId   String
+  observaciones   String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  ordenCompra     OrdenCompra             @relation(fields: [ordenCompraId], references: [id])
+  recibidoPor     Usuario                 @relation(fields: [recibidoPorId], references: [id])
+  detalles        RecepcionCompraDetalle[]
+
+  @@schema("public")
+}
+
+model RecepcionCompraDetalle {
+  id                String   @id @default(uuid())
+  recepcionCompraId String
+  productoId        String
+  loteId            String?
+  cantidad          Float
+
+  recepcionCompra   RecepcionCompra @relation(fields: [recepcionCompraId], references: [id])
+  producto          Producto        @relation(fields: [productoId], references: [id])
+
+  @@schema("public")
+}
+
+// Maps to the existing FacturaCompra table in the public schema
+model PublicFacturaCompra {
+  id                  String   @id @default(uuid())
+  numeroFactura       String
+  proveedorId         String
+  ordenCompraId       String?
+  recepcionMaterialId String?  @unique
+  fechaEmision        DateTime
+  fechaVencimiento    DateTime
+  subtotal            Float
+  iva                 Float
+  total               Float
+  estado              String   @default("PENDIENTE")
+  observaciones       String?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  proveedor         Proveedor            @relation(fields: [proveedorId], references: [id])
+  ordenCompra       OrdenCompra?         @relation(fields: [ordenCompraId], references: [id])
+  recepcionMaterial RecepcionMaterial?   @relation(fields: [recepcionMaterialId], references: [id], onDelete: SetNull)
+  detalles          PublicFacturaCompraDetalle[]
+  pagos             PublicPagoCompra[]
+
+  @@unique([proveedorId, numeroFactura])
+  @@map("FacturaCompra")
+  @@schema("public")
+}
+
+model PublicFacturaCompraDetalle {
+  id              String   @id @default(uuid())
+  facturaCompraId String
+  productoId      String
+  cantidad        Float
+  costoUnitario   Float
+  subtotal        Float
+
+  facturaCompra   PublicFacturaCompra @relation(fields: [facturaCompraId], references: [id], onDelete: Cascade)
+  producto        Producto      @relation(fields: [productoId], references: [id])
+
+  @@map("FacturaCompraDetalle")
+  @@schema("public")
+}
+
+model PublicPagoCompra {
+  id              String   @id @default(uuid())
+  facturaCompraId String
+  monto           Float
+  fechaPago       DateTime @default(now())
+  metodoPago      String
+  referencia      String?  
+  cajaId          String?  
+  usuarioId       String
+  createdAt       DateTime @default(now())
+
+  chequeNumero    String?  
+  chequeBanco     String?  
+  chequeVence     DateTime? 
+  transfeCuenta   String?  
+
+  facturaCompra   PublicFacturaCompra @relation(fields: [facturaCompraId], references: [id])
+  usuario         Usuario       @relation(fields: [usuarioId], references: [id])
+
+  @@map("PagoCompra")
+  @@schema("public")
+}
+
+model Receta {
+  id              String         @id @default(uuid())
+  nombre          String         @unique
+  descripcion     String?
+  productoFinalId String
+  cantidadEsperada Float         @default(1.0)
+  costoEstimado   Float          @default(0.0)
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  productoFinal   Producto       @relation(fields: [productoFinalId], references: [id])
+  detalles        RecetaDetalle[]
+  ordenes         OrdenProduccion[]
+
+  @@schema("public")
+}
+
+model RecetaDetalle {
+  id              String   @id @default(uuid())
+  recetaId        String
+  productoId      String
+  cantidadRequerida Float
+
+  receta          Receta   @relation(fields: [recetaId], references: [id], onDelete: Cascade)
+  producto        Producto @relation(fields: [productoId], references: [id])
+  sustitutos      RecetaDetalleSustituto[]
+
+  @@schema("public")
+}
+
+model RecetaDetalleSustituto {
+  id              String        @id @default(uuid())
+  recetaDetalleId String
+  productoId      String
+
+  recetaDetalle   RecetaDetalle @relation(fields: [recetaDetalleId], references: [id], onDelete: Cascade)
+  producto        Producto      @relation(fields: [productoId], references: [id])
+
+  @@unique([recetaDetalleId, productoId])
+  @@schema("public")
+}
+
+model OrdenProduccion {
+  id                 String                  @id @default(uuid())
+  numeroOrden        String                  @unique
+  recetaId           String
+  sucursalId         String
+  cantidadPlanificada Float
+  cantidadProducida  Float                   @default(0.0)
+  rendimientoEsperado Float                  @default(100.0)
+  rendimientoReal    Float                   @default(0.0)
+  variacion          Float                   @default(0.0)
+  estado             String                  @default("BORRADOR")
+  pickingCompletado  Boolean                 @default(false)
+  fechaInicio        DateTime?
+  fechaFin           DateTime?
+  fechaEntrega       DateTime?
+  creadoPorId        String
+  responsableId      String
+  createdAt          DateTime                @default(now())
+  updatedAt          DateTime                @updatedAt
+
+  receta             Receta                  @relation(fields: [recetaId], references: [id])
+  sucursal           Sucursal                @relation(fields: [sucursalId], references: [id])
+  creadoPor          Usuario                 @relation("CreadorOP", fields: [creadoPorId], references: [id])
+  responsable        Usuario                 @relation("ResponsableOP", fields: [responsableId], references: [id])
+  detalles           OrdenProduccionDetalle[]
+  mermas             Merma[]
+  inspecciones       ControlCalidad[]
+  lotesProducidos    Lote[]
+  operaciones        OrdenProduccionOperacion[]
+  mezclasLeche       MezclaLeche[]
+
+  @@schema("public")
+}
+
+model OrdenProduccionDetalle {
+  id                String          @id @default(uuid())
+  ordenProduccionId String
+  productoId        String
+  loteId            String?
+  cantidadConsumida Float
+
+  ordenProduccion   OrdenProduccion @relation(fields: [ordenProduccionId], references: [id], onDelete: Cascade)
+  producto          Producto        @relation(fields: [productoId], references: [id])
+  lote              Lote?           @relation(fields: [loteId], references: [id])
+
+  @@schema("public")
+}
+
+model Merma {
+  id                String          @id @default(uuid())
+  ordenProduccionId String?
+  productoId        String
+  loteId            String?
+  cantidad          Float
+  motivo            String
+  responsableId     String
+  fecha             DateTime        @default(now())
+
+  ordenProduccion   OrdenProduccion? @relation(fields: [ordenProduccionId], references: [id])
+  producto          Producto        @relation(fields: [productoId], references: [id])
+  responsable       Usuario         @relation(fields: [responsableId], references: [id])
+
+  @@schema("public")
+}
+
+model ControlLeche {
+  id               String   @id @default(uuid())
+  recepcionId      String?  
+  loteId           String?  
+  temperatura      Float
+  grasa            Float
+  proteina         Float
+  acidez           Float
+  antibioticos     Boolean
+  resultado        String   @default("APROBADO")
+  inspectorId      String
+  observaciones    String?
+  fecha            DateTime @default(now())
+
+  inspector        Usuario  @relation(fields: [inspectorId], references: [id])
+
+  @@schema("public")
+}
+
+model ControlCalidad {
+  id                String           @id @default(uuid())
+  tipo              String
+  ordenProduccionId String?
+  loteId            String?
+  temperatura       Float?
+  ph                Float?
+  parametrosCriticos String
+  resultado         String           @default("APROBADO")
+  inspectorId       String
+  observaciones     String?
+  fecha             DateTime         @default(now())
+
+  ordenProduccion   OrdenProduccion? @relation(fields: [ordenProduccionId], references: [id])
+  inspector         Usuario          @relation(fields: [inspectorId], references: [id])
+
+  @@schema("public")
+}
+
+model NoConformidad {
+  id                String   @id @default(uuid())
+  tipo              String
+  referenciaId      String?  
+  descripcion       String
+  evidenciaUrl      String?  
+  responsableId     String
+  estado            String   @default("REGISTRADA")
+  accionesCorrectivas String?
+  fecha             DateTime @default(now())
+
+  responsable       Usuario  @relation(fields: [responsableId], references: [id])
+
+  @@schema("public")
+}
+
+model Camion {
+  id               String   @id @default(uuid())
+  placa            String   @unique
+  capacidadPeso    Float
+  capacidadVolumen Float
+  temperaturaMin   Float
+  temperaturaMax   Float
+  estado           String   @default("DISPONIBLE")
+  gpsLat           Float?
+  gpsLng           Float?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  rutas            Ruta[]
+
+  @@schema("public")
+}
+
+model Conductor {
+  id        String   @id @default(uuid())
+  nombre    String
+  licencia  String
+  telefono  String
+  estado    String   @default("ACTIVO")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  rutas     Ruta[]
+
+  @@schema("public")
+}
+
+model Ruta {
+  id                    String            @id @default(uuid())
+  codigo                String            @unique
+  camionId              String
+  conductorId           String
+  estado                String            @default("PLANIFICADA")
+  fecha                 DateTime          @default(now())
+  origenId              String
+  kilometros            Float             @default(0)
+  tiempoEstimado        Float             @default(0)
+  consumoEstimado       Float             @default(0)
+  costoEntrega          Float             @default(0)
+  temperaturaSalida     Float?
+  temperaturaRecepcion  Float?
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+
+  camion                Camion            @relation(fields: [camionId], references: [id])
+  conductor             Conductor         @relation(fields: [conductorId], references: [id])
+  origen                Sucursal          @relation("OrigenRuta", fields: [origenId], references: [id])
+  puntos                RutaPunto[]
+  temperaturas          RutaTemperatura[]
+
+  @@schema("public")
+}
+
+model RutaPunto {
+  id          String   @id @default(uuid())
+  rutaId      String
+  sucursalId  String
+  ordenVisita Int
+  estado      String   @default("PENDIENTE")
+  tipo        String   @default("ENTREGA")
+
+  ruta        Ruta     @relation(fields: [rutaId], references: [id], onDelete: Cascade)
+  sucursal    Sucursal @relation(fields: [sucursalId], references: [id])
+
+  @@schema("public")
+}
+
+model RutaTemperatura {
+  id          String   @id @default(uuid())
+  rutaId      String
+  temperatura Float
+  humedad     Float?
+  fecha       DateTime @default(now())
+  estado      String   @default("OK")
+  ubicacion   String?
+
+  ruta        Ruta     @relation(fields: [rutaId], references: [id], onDelete: Cascade)
+
+  @@schema("public")
+}
+
+model SolicitudReabastecimiento {
+  id               String   @id @default(uuid())
+  codigo           String   @unique
+  sucursalId       String
+  productoId       String
+  cantidadSugerida Float
+  cantidadAprobada Float?
+  diasInventario   Float
+  stockObjetivo    Float
+  stockActual      Float
+  estado           String   @default("PENDIENTE")
+  tipoOrigen       String?
+  origenSugeridoId String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  sucursal         Sucursal @relation(fields: [sucursalId], references: [id])
+  producto         Producto @relation(fields: [productoId], references: [id])
+
+  @@schema("public")
+}
+
+model OrdenProduccionOperacion {
+  id                 String          @id @default(uuid())
+  ordenProduccionId  String
+  workCenter         String
+  estado             String          @default("PENDIENTE")
+  orden              Int             @default(0)
+  fechaInicio        DateTime?
+  fechaFin           DateTime?
+  duracionSegundos   Int?
+  duracionEstimada   Int             @default(30)
+  datosJson          String?
+  datosRequeridos    String?
+  notas              String?
+  usuarioId          String?
+  usuarioNombre      String?
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  ordenProduccion    OrdenProduccion @relation(fields: [ordenProduccionId], references: [id], onDelete: Cascade)
+
+  @@unique([ordenProduccionId, workCenter])
+  @@schema("public")
+}
+
+model CentroTrabajo {
+  id               String          @id
+  nombre           String
+  descripcion      String
+  duracionEstimada Int             @default(30)
+  datosRequeridos  String?
+  orden            Int             @default(0)
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  @@schema("public")
+}
+
+model BillOfOperations {
+  id              String   @id @default(uuid())
+  productoId      String
+  workCenter      String
+  orden           Int
+  duracionEstimada Int     @default(30)
+  datosRequeridos String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  producto        Producto  @relation(fields: [productoId], references: [id], onDelete: Cascade)
+
+  @@unique([productoId, workCenter])
+  @@schema("public")
+}
+
+model ProductoProveedor {
+  id              String    @id @default(uuid())
+  productoId      String
+  proveedorId     String
+  esPredeterminado Boolean   @default(false)
+  costoProveedor  Float?
+  codigoProveedor String?
+
+  producto        Producto  @relation(fields: [productoId], references: [id], onDelete: Cascade)
+  proveedor       Proveedor @relation(fields: [proveedorId], references: [id], onDelete: Cascade)
+
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([productoId, proveedorId])
+  @@schema("public")
+}
+
+model RecepcionMaterial {
+  id              String   @id @default(uuid())
+  numeroRecibo    String   @unique
+  ordenCompraId   String?
+  proveedorId     String?
+  sucursalId      String
+  fecha           DateTime @default(now())
+  recibidoPorId   String
+  facturaNumero   String?
+  packingSlip     String?
+  observaciones   String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  ordenCompra     OrdenCompra?            @relation(fields: [ordenCompraId], references: [id])
+  proveedor       Proveedor?              @relation(fields: [proveedorId], references: [id])
+  recibidoPor     Usuario                 @relation(fields: [recibidoPorId], references: [id])
+  sucursal        Sucursal                @relation(fields: [sucursalId], references: [id])
+  detalles        RecepcionMaterialDetalle[]
+
+  // Accounting relation
+  facturasContables FacturaCompra[]
+  publicFactura     PublicFacturaCompra?
+
+  @@schema("public")
+}
+
+model RecepcionMaterialDetalle {
+  id                  String   @id @default(uuid())
+  recepcionMaterialId String
+  productoId          String
+  cantidad            Float
+  costoUnitario       Float?
+  loteId              String?
+
+  recepcionMaterial   RecepcionMaterial @relation(fields: [recepcionMaterialId], references: [id], onDelete: Cascade)
+  producto            Producto          @relation(fields: [productoId], references: [id])
+  lote                Lote?             @relation(fields: [loteId], references: [id])
+
+  @@schema("public")
+}
+
+model MezclaLeche {
+  id                 String                  @id @default(uuid())
+  loteMixtoId        String
+  ordenProduccionId  String
+  createdAt          DateTime                @default(now())
+
+  loteMixto          Lote                    @relation("LoteMixtoRelation", fields: [loteMixtoId], references: [id])
+  ordenProduccion    OrdenProduccion         @relation(fields: [ordenProduccionId], references: [id])
+  componentes        MezclaLecheComponente[]
+
+  @@schema("public")
+}
+
+model MezclaLecheComponente {
+  id             String      @id @default(uuid())
+  mezclaLecheId  String
+  loteOrigenId   String
+  cantidadUsada  Float
+  proporcion     Float
+
+  mezclaLeche    MezclaLeche @relation(fields: [mezclaLecheId], references: [id], onDelete: Cascade)
+  loteOrigen     Lote        @relation("LoteOrigenRelation", fields: [loteOrigenId], references: [id])
+
+  @@schema("public")
+}
