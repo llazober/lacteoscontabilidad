@@ -1,6 +1,8 @@
 import * as dotenv from 'dotenv';
 dotenv.config();
 
+console.log("=== CONTABILIDAD BACKEND STARTING ===");
+
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { json, urlencoded } from 'express';
