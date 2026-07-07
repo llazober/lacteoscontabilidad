@@ -1,5 +1,8 @@
-# Base image
-FROM node:20-alpine AS builder
+# Base image using Debian Slim (more robust for Prisma/OpenSSL compatibility)
+FROM node:20-slim AS builder
+
+# Install openssl for Prisma compatibility
+RUN apt-get update && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
 WORKDIR /app
@@ -8,7 +11,7 @@ WORKDIR /app
 COPY package*.json ./
 COPY prisma ./prisma/
 
-# Install dependencies (including devDependencies for build)
+# Install dependencies
 RUN npm ci
 
 # Copy the rest of the application files
@@ -25,7 +28,10 @@ RUN npm prune --production
 
 
 # Production image stage
-FROM node:20-alpine
+FROM node:20-slim
+
+# Install openssl in production image too
+RUN apt-get update && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
